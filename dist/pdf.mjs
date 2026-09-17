@@ -8,6 +8,7 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  const W=595.28,H=841.89,M=38,B=W-M,content=W-2*M;
  const s=state.settings,sun=add(week,6),format=d=>d.toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'});
  const show=key=>s.pdf?.[key]!==false;
+ const value=v=>String(v??'').trim(),join=(parts,sep)=>parts.map(value).filter(Boolean).join(sep);
  let logo=null;
  if(show('logo')&&/^data:image\/(png|jpeg);base64,/.test(s.logo||'')){try{logo=s.logo.startsWith('data:image/png')?await doc.embedPng(s.logo):await doc.embedJpg(s.logo);}catch{throw Error('The employer logo could not be embedded. Replace or remove it in employer details.');}}
  const dayEntries=i=>state.entries[iso(add(week,i))]||[],all=Array.from({length:7},(_,i)=>dayEntries(i)).flat();
@@ -21,10 +22,10 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  const headers=()=>{rect(M,y,content,24,navy);['DATE',show('times')?'START':'',show('times')?'FINISH':'','HOURS',show('sites')||show('slotNotes')?'WORK DETAILS':''].forEach((v,i)=>text(v,[M+9,M+100,M+153,M+207,M+258][i],y+8,8,bold,white));y+=24;};
  const newPage=(first=false)=>{page=doc.addPage([W,H]);rect(0,0,W,7,blue);if(logo){const scale=Math.min(175/logo.width,32/logo.height);page.drawImage(logo,{x:M,y:H-48,width:logo.width*scale,height:logo.height*scale});}else if(show('employer')){text(wrap(s.employer,330,12,bold)[0],M,30,12,bold,blue);}text('WEEKLY TIMESHEET',M,57,25,bold);text('Week ending '+format(sun),M,92,10,regular,gray);text('PERSONAL HOUR LOG',B-118,34,8,bold,gray);rule(116);y=132;
  if(first){
- const fields=[[show('employer')?'PREPARED FOR':'',show('employer')?s.employer:''],['EMPLOYEE',s.name||'Not entered'],[show('legal')?'LEGAL ENTITY / ABN':'',show('legal')?s.legal+' / '+s.abn:''],[show('employee')?'EMPLOYEE / CONTRACTOR NO.':'',show('employee')?s.employee||'Not provided':'']];
+ const fields=[[show('employer')?'PREPARED FOR':'',show('employer')?value(s.employer):''],['EMPLOYEE',value(s.name)],[show('legal')?'LEGAL ENTITY / ABN':'',show('legal')?join([s.legal,s.abn],' / '):''],[show('employee')?'EMPLOYEE / CONTRACTOR NO.':'',show('employee')?value(s.employee):'']];
  for(let r=0;r<2;r++){let height=0;for(let c=0;c<2;c++){const [label,value]=fields[r*2+c],x=M+c*(content/2+8),lines=wrap(value,content/2-20,10,bold);text(label,x,y,7.5,bold,gray);lines.forEach((v,i)=>text(v,x,y+16+i*13,10,bold));height=Math.max(height,31+lines.length*13);}y+=height;}
  rect(M,y,content,51,pale);[['PERIOD',format(week)+' - '+format(sun)],[show('schedule')?'SUBMISSION':'',show('schedule')?format(parseDate(submissionSchedule(state,week).date)):''],[show('schedule')?'PAYMENT':'',show('schedule')?format(add(week,9)):'']].forEach(([label,value],i)=>{let x=M+12+[0,218,360][i];text(label,x,y+10,7,bold,gray);text(value,x,y+27,9,bold);});y+=70;
- }else{text(s.name||'Employee not entered',M,y,10,bold);text('Continued',B-49,y,9,regular,gray);y+=26;}
+ }else{text(value(s.name),M,y,10,bold);text('Continued',B-49,y,9,regular,gray);y+=26;}
  headers();};
  newPage(true);
  const ensure=h=>{if(y+h>H-75)newPage();};
@@ -32,13 +33,13 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  const d=add(week,i),list=dayEntries(i),date=d.toLocaleDateString('en-AU',{weekday:'short',day:'numeric',month:'short'});
  const entries=list.length?list:[null];
  for(let j=0;j<entries.length;j++){
- const e=entries[j],description=e?[e.kind==='summary'?'Daily summary':null,show('sites')?e.site:null,show('slotNotes')?e.notes:null].filter(Boolean).join('\n'):'No hours recorded';
+ const e=entries[j],description=e?[e.kind==='summary'?'Daily summary':null,show('sites')?value(e.site):null,show('slotNotes')?value(e.notes):null].filter(Boolean).join('\n'):'';
  const lines=wrap(description,content-270,9),chunks=[];for(let k=0;k<lines.length;k+=27)chunks.push(lines.slice(k,k+27));
  for(let k=0;k<chunks.length;k++){
  const chunk=chunks[k],height=Math.max(28,chunk.length*12+12);ensure(height);
  if(i%2===0)rect(M,y,content,height,rgb(.976,.983,.989));
  text(k?'(continued)':j?'':date,M+9,y+11,9,j?regular:bold);
- if(!k){if(show('times')){text(e?.kind==='summary'?'-':e?.start||'-',M+100,y+11);text(e?.kind==='summary'?'-':e?.finish||'-',M+153,y+11);}text(e?hours(e).toFixed(2)+(e.kind!=='summary'&&e.manual!==''&&e.manual!=null?'*':''):'-',M+207,y+11,9,bold);}
+ if(!k){if(show('times')){text(e?.kind==='summary'?'':value(e?.start),M+100,y+11);text(e?.kind==='summary'?'':value(e?.finish),M+153,y+11);}text(e?hours(e).toFixed(2)+(e.kind!=='summary'&&e.manual!==''&&e.manual!=null?'*':''):'',M+207,y+11,9,bold);}
  chunk.forEach((v,n)=>text(v,M+258,y+10+n*12,9,regular,gray));y+=height;rule(y);
  }
  }
