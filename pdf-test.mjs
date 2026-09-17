@@ -38,3 +38,19 @@ assert.ok(drawn.includes('EMPLOYEE'),'field labels are kept so blanks can be fil
 assert.ok(!drawn.some(t=>t.trim()==='-'),'missing times and hours are left blank, not dashed');
 assert.ok(drawn.includes('Tue, 15 Sept'),'days without hours still get a row');
 console.log('PDF: missing details are left blank.');
+
+// The employer logo prints large: it fills the header box instead of a 32pt strip.
+const dot='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const branded=migrate({settings:{name:'Boma Ipalibo',logo:dot},entries:{'2026-09-14':[{start:'07:00',finish:'15:00',manual:'',site:'Rosebud',notes:'Site works'}]}});
+const branded_pdf=await createTimesheetPdf(branded,new Date('2026-09-14T12:00:00'),api);
+const streams=(()=>{const buf=Buffer.from(branded_pdf.bytes);let out='',i=0;
+ while((i=buf.indexOf('stream',i))!==-1){let start=i+6;if(buf[start]===13)start++;if(buf[start]===10)start++;
+  const end=buf.indexOf('endstream',start);if(end===-1)break;
+  try{out+=zlib.inflateSync(buf.subarray(start,end)).toString('latin1');}catch{}i=end+9;}
+ return out;})();
+const drawnLogo=/([\d.]+) 0 0 ([\d.]+) 0 0 cm\s*\n1 0 0 1 0 0 cm\s*\n\/Image/.exec(streams);
+assert.ok(drawnLogo,'the logo is drawn on the page');
+assert.equal(Number(drawnLogo[2]),86,'a square logo prints at the full header height');
+assert.ok(Number(drawnLogo[1])>=86,'the logo keeps its aspect ratio at the larger size');
+assert.equal((await api.PDFDocument.load(branded_pdf.bytes)).getPageCount(),1,'the larger logo does not push a normal week onto a second page');
+console.log('PDF: employer logo prints at the large header size.');

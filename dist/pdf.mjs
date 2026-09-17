@@ -11,6 +11,8 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  const value=v=>String(v??'').trim(),join=(parts,sep)=>parts.map(value).filter(Boolean).join(sep);
  let logo=null;
  if(show('logo')&&/^data:image\/(png|jpeg);base64,/.test(s.logo||'')){try{logo=s.logo.startsWith('data:image/png')?await doc.embedPng(s.logo):await doc.embedJpg(s.logo);}catch{throw Error('The employer logo could not be embedded. Replace or remove it in employer details.');}}
+ const LOGO_MAX_W=300,LOGO_MAX_H=86,LOGO_TOP=16;
+ const logoScale=logo?Math.min(LOGO_MAX_W/logo.width,LOGO_MAX_H/logo.height):0,logoW=logo?logo.width*logoScale:0,logoH=logo?logo.height*logoScale:0;
  const dayEntries=i=>state.entries[iso(add(week,i))]||[],all=Array.from({length:7},(_,i)=>dayEntries(i)).flat();
  const clean=value=>Array.from(String(value??'').replace(/[–—]/g,'-')).map(c=>{if(c==='\n')return c;try{regular.encodeText(c);return c;}catch{return '?';}}).join('');
  const wrap=(text,width,size=9,font=regular)=>{
@@ -20,7 +22,10 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  const rect=(x,top,w,h,color)=>page.drawRectangle({x,y:H-top-h,width:w,height:h,color});
  const rule=(top)=>page.drawLine({start:{x:M,y:H-top},end:{x:B,y:H-top},thickness:.6,color:line});
  const headers=()=>{rect(M,y,content,24,navy);['DATE',show('times')?'START':'',show('times')?'FINISH':'','HOURS',show('sites')||show('slotNotes')?'WORK DETAILS':''].forEach((v,i)=>text(v,[M+9,M+100,M+153,M+207,M+258][i],y+8,8,bold,white));y+=24;};
- const newPage=(first=false)=>{page=doc.addPage([W,H]);rect(0,0,W,7,blue);if(logo){const scale=Math.min(175/logo.width,32/logo.height);page.drawImage(logo,{x:M,y:H-48,width:logo.width*scale,height:logo.height*scale});}else if(show('employer')){text(wrap(s.employer,330,12,bold)[0],M,30,12,bold,blue);}text('WEEKLY TIMESHEET',M,57,25,bold);text('Week ending '+format(sun),M,92,10,regular,gray);text('PERSONAL HOUR LOG',B-118,34,8,bold,gray);rule(116);y=132;
+ const newPage=(first=false)=>{page=doc.addPage([W,H]);rect(0,0,W,7,blue);const right=(v,top,size,font,color)=>text(v,B-font.widthOfTextAtSize(clean(v),size),top,size,font,color);
+ if(logo){page.drawImage(logo,{x:M,y:H-LOGO_TOP-logoH,width:logoW,height:logoH});right('WEEKLY TIMESHEET',44,16,bold,navy);right('Week ending '+format(sun),69,9.5,regular,gray);}
+ else{if(show('employer'))text(wrap(s.employer,330,12,bold)[0],M,30,12,bold,blue);text('WEEKLY TIMESHEET',M,57,25,bold);text('Week ending '+format(sun),M,92,10,regular,gray);text('PERSONAL HOUR LOG',B-118,34,8,bold,gray);}
+ rule(116);y=132;
  if(first){
  const fields=[[show('employer')?'PREPARED FOR':'',show('employer')?value(s.employer):''],['EMPLOYEE',value(s.name)],[show('legal')?'LEGAL ENTITY / ABN':'',show('legal')?join([s.legal,s.abn],' / '):''],[show('employee')?'EMPLOYEE / CONTRACTOR NO.':'',show('employee')?value(s.employee):'']];
  for(let r=0;r<2;r++){let height=0;for(let c=0;c<2;c++){const [label,value]=fields[r*2+c],x=M+c*(content/2+8),lines=wrap(value,content/2-20,10,bold);text(label,x,y,7.5,bold,gray);lines.forEach((v,i)=>text(v,x,y+16+i*13,10,bold));height=Math.max(height,31+lines.length*13);}y+=height;}
