@@ -12,7 +12,11 @@ Import this repository in Vercel, select framework **Other**, and use output dir
 
 ## Current status
 
-The app currently saves entries in browser storage. PDF export and Gmail draft preparation work. Cloud sign-in, device sync, scheduled sending, and automatic PDF attachment are not yet implemented. A Gmail draft must be checked, have the downloaded PDF attached, and be sent by the user.
+The app saves entries in browser storage. PDF export, preview and printing work. **Send to accounts** emails the PDF in one click once the send service is deployed and connected — see `SENDING.md`. Until then the button points you at Settings and "Email by hand" opens a pre-filled Gmail draft for you to attach the downloaded PDF yourself. Cloud sign-in, device sync and scheduled unattended sending are still not implemented.
+
+## Send to accounts
+
+One click builds the weekly PDF, posts it to the `send-timesheet` Supabase Edge Function, and that function emails it from `projects@gradcon.com.au` through the Gmail API, archives it in the private `timesheet-pdfs` bucket, and logs the send. The browser holds only its own send token; no Google credential and no service-role key ever reaches the page. Setup steps are in `SENDING.md`; the function is in `supabase/functions/send-timesheet/`.
 
 Supabase project `yflwwzmyakmwvslmirzx` has the database and private PDF bucket prepared. See `MIGRATION.md` for remaining integration tasks. Never place service-role keys, Gmail credentials, or access tokens in this repository or browser code.
 

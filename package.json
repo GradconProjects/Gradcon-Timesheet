@@ -2,6 +2,10 @@
   "name": "gradcon-timesheet",
   "version": "0.1.0",
   "private": true,
-  "scripts": {"test": "node test.mjs && node pdf-test.mjs && node features-test.mjs"},
-  "engines": {"node": ">=22"}
+  "scripts": {
+    "test": "node test.mjs && node pdf-test.mjs && node features-test.mjs && node send-test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  }
 }

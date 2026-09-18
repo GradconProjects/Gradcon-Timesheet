@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import * as core from './dist/core.mjs';
 import * as automation from './dist/automation.mjs';
+import * as send from './dist/send.mjs';
 const {migrate,hours,dailyTotal,validateSlot,overlaps,ensureUnlocked,iso,monday}=core;
 const date='2026-09-17';
 const original={settings:{name:'Test person'},entries:{[date]:{start:'07:00',finish:'11:00',manual:'',site:'Rosebud',notes:'Original work'}},submitted:{}};
@@ -29,7 +30,7 @@ for(const match of html.matchAll(/id="([^"]+)"/g))elements.set(match[1],new Elem
 const doc={getElementById:id=>{if(!elements.has(id))throw Error('Missing DOM id: '+id);return elements.get(id);},querySelectorAll:()=>[],modelContext:{registerTool(t){tools.set(t.name,t);}}};
 const storage=new Map([['gradcon-timesheet-v1',JSON.stringify(original)]]);
 const tools=new Map();let printed=false,opened='';
-const context=vm.createContext({...core,...automation,document:doc,localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},URLSearchParams,window:{addEventListener(){},open(url){opened=url;},print(){printed=true;}},crypto:{randomUUID:()=>crypto.randomUUID()},structuredClone,console,confirm:()=>true,setTimeout:()=>1,clearTimeout(){}});
+const context=vm.createContext({...core,...automation,...send,document:doc,localStorage:{getItem:k=>storage.get(k),setItem:(k,v)=>storage.set(k,v)},URLSearchParams,window:{addEventListener(){},open(url){opened=url;},print(){printed=true;}},crypto:{randomUUID:()=>crypto.randomUUID()},structuredClone,console,confirm:()=>true,setTimeout:()=>1,clearTimeout(){}});
 vm.runInContext(fs.readFileSync('dist/app.js','utf8').replace(/^import[^\n]+\n/gm,''),context);
 const tool=tools.get('add_time_entry');
 assert.ok(tool);

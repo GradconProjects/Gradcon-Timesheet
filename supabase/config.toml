@@ -1,0 +1,7 @@
+project_id = "yflwwzmyakmwvslmirzx"
+
+# The browser calls this function with its own SEND_TOKEN rather than a Supabase
+# session, because the timesheet app has no sign-in yet. The function checks that
+# token and refuses any recipient outside ALLOWED_RECIPIENTS.
+[functions.send-timesheet]
+verify_jwt = false
