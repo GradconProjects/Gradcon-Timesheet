@@ -1,6 +1,6 @@
 # Gradcon Timesheet
 
-Personal Monday–Sunday timesheets with split slots or daily summaries, editable details, and polished PDF export. There are no break deductions or Xero integrations.
+Personal Monday–Sunday timesheets with split slots or daily summaries, editable details, and polished PDF export. The export is always a single A4 page: the week is measured before it is drawn, the page compacts and the type shrinks to fit, long descriptions are trimmed only if that is not enough, and a week too busy for one page says on the page how many rows are not shown — the total always counts every slot. There are no break deductions or Xero integrations.
 
 ## Run
 

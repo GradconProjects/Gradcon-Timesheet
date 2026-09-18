@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import assert from 'node:assert/strict';
 import {createTimesheetPdf} from './dist/pdf.mjs';
-import {migrate} from './dist/core.mjs';
+import {migrate,dailyTotal} from './dist/core.mjs';
 const require=createRequire(import.meta.url),api=require('./dist/pdf-lib.min.js');
 const state=migrate({settings:{name:'Boma Ipalibo',employee:'Projects'},entries:{
  '2026-09-14':[{start:'07:00',finish:'11:00',manual:'',site:'Rosebud',notes:'Project coordination and site inspection'},{start:'12:00',finish:'16:00',manual:'',site:'Sorrento',notes:'Concrete works and documentation'}],
@@ -14,10 +14,27 @@ const result=await createTimesheetPdf(state,new Date('2026-09-14T12:00:00'),api)
 fs.mkdirSync('test-output',{recursive:true});
 fs.writeFileSync('test-output/pdf-review.pdf',result.bytes);
 let doc=await api.PDFDocument.load(result.bytes);assert.equal(doc.getPageCount(),1);
+// Whatever the week holds, the export is one page.
 state.entries['2026-09-17']=[{kind:'summary',manual:8,site:'Long site title',notes:'Detailed work notes '.repeat(450)}];
-doc=await api.PDFDocument.load((await createTimesheetPdf(state,new Date('2026-09-14T12:00:00'),api)).bytes);
-assert.ok(doc.getPageCount()>1);
-console.log('PDF: single-page weekly log and long-note pagination passed.');
+const long=await createTimesheetPdf(state,new Date('2026-09-14T12:00:00'),api);
+doc=await api.PDFDocument.load(long.bytes);
+assert.equal(doc.getPageCount(),1,'a very long note is trimmed rather than spilling onto page two');
+assert.equal(long.hidden,0,'no hours are dropped to make a long note fit');
+fs.writeFileSync('test-output/pdf-long-note.pdf',long.bytes);
+
+// A week with far more slots than a page can hold still exports one page, and
+// says on the page how many rows are not shown.
+const busy=migrate({settings:{name:'Boma Ipalibo'},entries:Object.fromEntries(
+ ['2026-09-14','2026-09-15','2026-09-16','2026-09-17','2026-09-18','2026-09-19','2026-09-20'].map(date=>[date,
+  Array.from({length:9},(_,i)=>({id:date+'-'+i,start:String(6+i).padStart(2,'0')+':00',finish:String(6+i).padStart(2,'0')+':45',manual:'',
+   site:'Site '+i,notes:'Work carried out on '+date+' during slot '+i}))]))});
+const crowded=await createTimesheetPdf(busy,new Date('2026-09-14T12:00:00'),api);
+assert.equal((await api.PDFDocument.load(crowded.bytes)).getPageCount(),1,'63 slots still fit on one page');
+fs.writeFileSync('test-output/pdf-crowded.pdf',crowded.bytes);
+
+// The weekly total always counts every slot, shown or not.
+assert.equal(dailyTotal(Object.values(busy.entries).flat()).toFixed(2),'47.25');
+console.log('PDF: single-page weekly log, long notes trimmed, crowded weeks still one page.');
 
 // Missing details must print as blank space, never as placeholder wording.
 const pdfStrings=bytes=>{
