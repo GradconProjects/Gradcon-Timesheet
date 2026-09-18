@@ -1,14 +1,25 @@
-import {migrate,iso,parseDate,monday,add,hours,dailyTotal,validateSlot,validDate,appendSlot,ensureUnlocked,overlaps,companySnapshot,switchCompany} from './core.mjs';
+import {migrate,iso,parseDate,monday,add,hours,dailyTotal,validateSlot,validDate,appendSlot,ensureUnlocked,overlaps,companySnapshot,switchCompany,recoveryCandidates,restoreWeek} from './core.mjs';
 import {createTimesheetPdf} from './pdf.mjs';
 import {submissionSchedule} from './automation.mjs';
 const $=id=>document.getElementById(id),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const STORAGE='gradcon-timesheet-v2',LEGACY='gradcon-timesheet-v1';
+const STORAGE='gradcon-timesheet-v2',LEGACY='gradcon-timesheet-v1',BACKUPS='gradcon-timesheet-backups',BACKUP_LIMIT=6;
+const readStore=key=>{try{return JSON.parse(localStorage.getItem(key)||'null');}catch{return null;}};
+const readBackups=()=>{const list=readStore(BACKUPS);return Array.isArray(list)?list:[];};
+function rememberHours(current){try{const entries=current?.entries||{};if(!Object.values(entries).some(list=>list?.length))return;
+ const list=readBackups(),signature=JSON.stringify(entries);if(list[0]&&JSON.stringify(list[0].entries)===signature)return;
+ list.unshift({savedAt:new Date().toISOString(),settings:{employer:current.settings?.employer||''},entries:JSON.parse(signature)});
+ localStorage.setItem(BACKUPS,JSON.stringify(list.slice(0,BACKUP_LIMIT)));}catch{}}
 let state,storageError=false;
 try{state=migrate(JSON.parse(localStorage.getItem(STORAGE)||localStorage.getItem(LEGACY)||'null'));}catch{state=migrate(null);storageError=true;}
 let selected=monday(new Date()),editing=null,newEmployer=false,pendingLogo='';
 const fmt=(d,options={day:'numeric',month:'short'})=>d.toLocaleDateString('en-AU',options),slots=date=>state.entries[date]||[];
 function toast(message){$('toast').textContent=message;$('toast').classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').classList.remove('show'),4000);}
-function persist(next,redraw=true){if(storageError)throw Error('Stored data could not be read. Please allow browser storage and reload before saving.');localStorage.setItem(STORAGE,JSON.stringify(next));state=next;if(redraw)render();}
+function persist(next,redraw=true){if(storageError)throw Error('Stored data could not be read. Please allow browser storage and reload before saving.');
+ rememberHours(state);
+ try{localStorage.setItem(STORAGE,JSON.stringify(next));}
+ catch{try{localStorage.removeItem(BACKUPS);localStorage.setItem(STORAGE,JSON.stringify(next));}
+  catch{throw Error('This browser refused to save — its storage is full. Remove a company logo in Settings, then save again. Nothing already saved has been lost.');}}
+ state=next;if(redraw)render();}
 function transact(action){try{action();}catch(e){toast(e.message||'Unable to save. Your existing data has not changed.');}}
 function weekSlots(){return Array.from({length:7},(_,i)=>slots(iso(add(selected,i)))).flat();}
 function getStatus(){if(state.submitted[iso(selected)])return 'Submitted';return iso(new Date())>=iso(add(selected,8))?'Ready to submit':'In progress';}
@@ -103,4 +114,17 @@ $('emailForm').onsubmit=e=>{e.preventDefault();const fields=['mailFrom','mailTo'
 
 function openHistory(){const records=[...(state.history||[])].reverse();const legacy=Object.keys(state.submitted).filter(w=>!records.some(h=>h.week===w));$('historyList').innerHTML=records.map(h=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(h.week),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Marked submitted · Revision '+h.revision+'<br>'+esc(new Date(h.savedAt).toLocaleString('en-AU'))+'</p></div><div><button class="btn" data-history-week="'+esc(h.week)+'">Open week</button><button class="btn primary" data-history-pdf="'+esc(h.id)+'">Saved PDF</button></div></article>').join('')+legacy.map(w=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(w),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Previously marked submitted · No saved PDF snapshot</p></div><button class="btn" data-history-week="'+esc(w)+'">Open week</button></article>').join('')||'<p>No submissions yet. Mark a completed week as submitted to save a PDF snapshot here.</p>';$('historyDialog').showModal();}
 $('navHistory').onclick=openHistory;
+let recoverable=[];
+function openRecover(){
+ recoverable=recoveryCandidates([{label:'This employer list',raw:readStore(STORAGE)},{label:'Older version of the app',raw:readStore(LEGACY)},...readBackups().map(b=>({label:'Automatic backup \u00b7 '+new Date(b.savedAt).toLocaleString('en-AU'),raw:b}))]);
+ $('recoverList').innerHTML=recoverable.map((w,i)=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(w.key),6),{day:'numeric',month:'short',year:'numeric'}))+' \u00b7 '+w.hours.toFixed(2)+' hours</strong><p>'+w.slots+' time '+(w.slots===1?'slot':'slots')+(w.employer?' \u00b7 '+esc(w.employer):'')+'<br>'+esc(w.source)+'</p></div><div><button class="btn" data-recover-week="'+esc(w.key)+'">Open week</button><button class="btn primary" data-recover="'+i+'">Restore</button></div></article>').join('')||'<p>No stored hours were found in this browser. If you entered them on another device or browser, open the timesheet there \u2014 hours are not synced between devices.</p>';
+ $('recoverDialog').showModal();
+}
+$('recoverBtn').onclick=openRecover;
+$('recoverList').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+ if(b.dataset.recoverWeek){selected=parseDate(b.dataset.recoverWeek);render();$('recoverDialog').close();return;}
+ if(!b.dataset.recover)return;const week=recoverable[Number(b.dataset.recover)];if(!week)return;
+ if(!confirm('Add '+week.hours.toFixed(2)+' hours to the week ending '+fmt(add(parseDate(week.key),6),{day:'numeric',month:'short',year:'numeric'})+' for '+(state.settings.employer||'this employer')+'? Hours already in that week are kept.'))return;
+ transact(()=>{persist(restoreWeek(state,week));selected=parseDate(week.key);render();$('recoverDialog').close();toast('Hours restored');});
+});
 $('historyList').addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.historyWeek){selected=parseDate(b.dataset.historyWeek);render();$('historyDialog').close();}if(b.dataset.historyPdf){const h=state.history.find(h=>h.id===b.dataset.historyPdf);if(!h)return;try{const file=await createTimesheetPdf(h.snapshot,parseDate(h.week));savePdf(file,file.filename.replace('.pdf','-revision-'+h.revision+'.pdf'));}catch(error){toast('Saved PDF could not be created: '+error.message);}}});

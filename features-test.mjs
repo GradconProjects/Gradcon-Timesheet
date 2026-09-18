@@ -31,3 +31,29 @@ assert.equal(isSubmissionDue(summer,new Date('2026-12-22T12:00:00Z')),true);
 empty.scheduleOverrides['2026-09-14']='2026-09-24';
 assert.equal(submissionSchedule(empty,week).date,'2026-09-24');
 console.log('PASS: employer isolation, immutable snapshots, private notes, 30-hour fallback, partial-week protection, date overrides, Melbourne daylight saving.');
+
+// Hours are never lost: whatever is still stored on the device can be found and put back.
+import {recoveryCandidates,restoreWeek,iso,weekKey} from './dist/core.mjs';
+const stored={settings:{employer:'Gradcon Concrete Constructions'},entries:{},companies:{old:{settings:{employer:'Gradcon Concrete Constructions'},entries:{
+ '2026-09-14':[{id:'a',start:'07:00',finish:'15:30',manual:'',site:'Rosebud',notes:'Slab prep'}],
+ '2026-09-15':[{id:'b',start:'07:00',finish:'16:00',manual:'',site:'Sorrento',notes:'Pour'}]}}},
+ history:[{snapshot:{settings:{employer:'Gradcon Concrete Constructions'},entries:{'2026-09-07':[{id:'c',kind:'summary',manual:'8'}]}}}]};
+const found=recoveryCandidates([{label:'This employer list',raw:stored},{label:'Older version of the app',raw:null}]);
+assert.equal(found.length,2,'the other employer profile and the submitted snapshot are both offered');
+assert.equal(found[0].key,'2026-09-14');
+assert.equal(found[0].hours.toFixed(2),'17.50');
+assert.equal(found[0].slots,2);
+assert.ok(found[1].source.includes('saved submission'));
+// restoring keeps hours already in the week and does not duplicate a slot
+const live=migrate({settings:{employer:'Gradcon Concrete Constructions'},entries:{'2026-09-14':[{id:'kept',start:'17:00',finish:'19:00',manual:''}]}});
+const back=restoreWeek(live,found[0]);
+assert.equal(back.entries['2026-09-14'].length,2,'the existing slot is kept beside the restored one');
+assert.equal(dailyTotal(back.entries['2026-09-14']).toFixed(2),'10.50');
+assert.equal(back.entries['2026-09-15'].length,1);
+assert.deepEqual(live.entries['2026-09-15'],undefined,'the live state is not mutated');
+assert.equal(new Set(back.entries['2026-09-14'].map(e=>e.id)).size,2,'restored slots get fresh ids');
+// a submitted week stays locked until it is reopened
+const locked=migrate({entries:{},submitted:{[weekKey('2026-09-14')]:true}});
+assert.throws(()=>restoreWeek(locked,found[0]),/Reopen this timesheet/);
+assert.equal(iso(parseDate(found[0].key)),'2026-09-14');
+console.log('PASS: recovery finds stored hours in other profiles, snapshots and backups, and restores them safely.');

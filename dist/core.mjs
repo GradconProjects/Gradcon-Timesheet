@@ -11,6 +11,39 @@ export function migrate(raw){const state={schema:3,activeCompany:raw?.activeComp
 export function companySnapshot(state){return structuredClone({settings:state.settings,entries:state.entries,submitted:state.submitted,dayNotes:state.dayNotes,dayNotesIncluded:state.dayNotesIncluded,history:state.history,scheduleOverrides:state.scheduleOverrides});}
 export function switchCompany(state,id){const next=structuredClone(state);next.companies[next.activeCompany]=companySnapshot(next);if(!next.companies[id])throw Error('Employer not found.');Object.assign(next,structuredClone(next.companies[id]));next.activeCompany=id;return next;}
 export const dailyTotal=slots=>(slots||[]).reduce((n,s)=>n+hours(s),0);
+export function recoveryCandidates(stores){
+ const found=[],seen=new Set();
+ const collect=(source,employer,entries)=>{
+  const weeks={};
+  for(const [date,value] of Object.entries(entries||{})){
+   if(!validDate(date))continue;
+   const list=(Array.isArray(value)?value:[value]).filter(Boolean);if(!list.length)continue;
+   const key=weekKey(date),week=weeks[key]??={key,source,employer,days:{},slots:0,hours:0};
+   week.days[date]=list;week.slots+=list.length;week.hours+=dailyTotal(list);
+  }
+  for(const week of Object.values(weeks)){
+   const signature=[source,employer,week.key,week.slots,week.hours.toFixed(2)].join('|');
+   if(seen.has(signature))continue;seen.add(signature);found.push(week);
+  }
+ };
+ for(const {label,raw} of stores||[]){
+  if(!raw||typeof raw!=='object')continue;
+  collect(label,raw.settings?.employer||'',raw.entries);
+  for(const company of Object.values(raw.companies||{}))collect(label,company?.settings?.employer||'',company?.entries);
+  for(const record of raw.history||[])collect(label+' \u00b7 saved submission',record?.snapshot?.settings?.employer||'',record?.snapshot?.entries);
+ }
+ return found.sort((a,b)=>b.key.localeCompare(a.key)||b.hours-a.hours);
+}
+export function restoreWeek(state,week){
+ const next=structuredClone(state);
+ for(const [date,list] of Object.entries(week.days||{})){
+  ensureUnlocked(next,date);
+  const kept=next.entries[date]||[],ids=new Set(kept.map(e=>e.id));
+  const added=list.filter(e=>!ids.has(e.id)).map(e=>({...e,id:typeof crypto!=='undefined'&&crypto.randomUUID?crypto.randomUUID():'restored-'+date+'-'+Math.random().toString(36).slice(2)}));
+  next.entries[date]=[...kept,...added].sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+ }
+ return next;
+}
 export function appendSlot(state,date,slot){validateSlot({...slot,date});return {...state,entries:{...state.entries,[date]:[...(state.entries[date]||[]),slot]}};}
 export function weekKey(date){return iso(monday(parseDate(date)));}
 export function ensureUnlocked(state,date){if(state.submitted[weekKey(date)])throw Error('Reopen this timesheet before editing its slots.');}
