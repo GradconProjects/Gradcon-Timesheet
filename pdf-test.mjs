@@ -71,3 +71,20 @@ assert.equal(Number(drawnLogo[2]),86,'a square logo prints at the full header he
 assert.ok(Number(drawnLogo[1])>=86,'the logo keeps its aspect ratio at the larger size');
 assert.equal((await api.PDFDocument.load(branded_pdf.bytes)).getPageCount(),1,'the larger logo does not push a normal week onto a second page');
 console.log('PDF: employer logo prints at the large header size.');
+
+// The fit search runs in the browser on every export, so it has to be quick
+// even when every day carries long notes as well as a full set of slots.
+const heavyDates=['2026-09-14','2026-09-15','2026-09-16','2026-09-17','2026-09-18','2026-09-19','2026-09-20'];
+const heavy=migrate({settings:{name:'Boma Ipalibo',employer:'Gradcon Concrete Constructions'},
+ dayNotes:Object.fromEntries(heavyDates.map(d=>[d,'Long day note '.repeat(60)])),
+ dayNotesIncluded:Object.fromEntries(heavyDates.map(d=>[d,true])),
+ entries:Object.fromEntries(heavyDates.map(d=>[d,Array.from({length:5},(_,i)=>({id:d+i,
+  start:String(6+i).padStart(2,'0')+':00',finish:String(6+i).padStart(2,'0')+':45',manual:'',
+  site:'Rosebud compound',notes:'Concrete works '.repeat(20)}))]))});
+const started=Date.now();
+const dense=await createTimesheetPdf(heavy,new Date('2026-09-14T12:00:00'),api);
+const elapsed=Date.now()-started;
+assert.equal((await api.PDFDocument.load(dense.bytes)).getPageCount(),1,'35 slots and seven long day notes still make one page');
+assert.ok(elapsed<3000,'the layout search took '+elapsed+'ms; it must stay well under a second of browser time');
+fs.writeFileSync('test-output/pdf-heavy.pdf',dense.bytes);
+console.log('PDF: a heavy week lays out in '+elapsed+'ms on one page.');

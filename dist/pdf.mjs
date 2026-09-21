@@ -30,10 +30,23 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  let logo=null;
  if(show('logo')&&/^data:image\/(png|jpeg);base64,/.test(s.logo||'')){try{logo=s.logo.startsWith('data:image/png')?await doc.embedPng(s.logo):await doc.embedJpg(s.logo);}catch{throw Error('The employer logo could not be embedded. Replace or remove it in employer details.');}}
  const dayEntries=i=>state.entries[iso(add(week,i))]||[],all=Array.from({length:7},(_,i)=>dayEntries(i)).flat();
- const clean=value=>Array.from(String(value??'').replace(/[–—]/g,'-')).map(c=>{if(c==='\n')return c;try{regular.encodeText(c);return c;}catch{return '?';}}).join('');
+ const cleaned=new Map();
+ const clean=value=>{
+  const raw=String(value??'').replace(/[–—]/g,'-');
+  const known=cleaned.get(raw);if(known!==undefined)return known;
+  let out;
+  try{regular.encodeText(raw.split('\n').join(' '));out=raw;}
+  catch{out=Array.from(raw).map(c=>{if(c==='\n')return c;try{regular.encodeText(c);return c;}catch{return '?';}}).join('');}
+  cleaned.set(raw,out);return out;
+ };
  const wrap=(text,width,size=9,font=regular)=>{
  let lines=[],current='';for(const para of clean(text).split('\n')){for(const word of para.split(/\s+/)){let part=word;while(font.widthOfTextAtSize(part,size)>width){let n=1;while(n<part.length&&font.widthOfTextAtSize(part.slice(0,n+1),size)<=width)n++;if(current){lines.push(current);current='';}lines.push(part.slice(0,n));part=part.slice(n);}const candidate=current?current+' '+part:part;if(font.widthOfTextAtSize(candidate,size)>width){lines.push(current);current=part;}else current=candidate;}lines.push(current);current='';}return lines.length?lines:[''];};
 
+ const wrapped=new Map();
+ const measure=(text,width,size)=>{
+  const key=size+'|'+width+'|'+text;const known=wrapped.get(key);
+  if(known)return known;const lines=wrap(text,width,size);wrapped.set(key,lines);return lines;
+ };
  const page=doc.addPage([W,H]);
  let y;
  const text=(v,x,top,size=9,font=regular,color=navy)=>page.drawText(clean(v),{x,y:H-top-size,font,size,color});
@@ -62,7 +75,7 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
    entries.forEach((e,j)=>{
     const parts=e?[e.kind==='summary'?'Daily summary':null,show('sites')?value(e.site):null,show('slotNotes')?value(e.notes):null].filter(Boolean):[];
     const description=parts.join(joined?' \u00b7 ':'\n');
-    let lines=wrap(description,content-270,m.size);
+    let lines=measure(description,content-270,m.size).slice();
     if(lines.length>cap){lines=lines.slice(0,cap);lines[lines.length-1]=clip(lines[lines.length-1]);}
     const sub=totals==='fold'&&j===0&&list.length>1?dailyTotal(list).toFixed(2)+' hrs':'';
     blocks.push({kind:'row',stripe:i%2===0,date:j?'':date,sub,
@@ -74,7 +87,7 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
    if(list.length>1&&totals==='rows')blocks.push({kind:'total',hours:dailyTotal(list).toFixed(2)+' hrs',height:m.gap});
    const note=state.dayNotes?.[iso(d)];
    if(show('dayNotes')&&note&&state.dayNotesIncluded?.[iso(d)]){
-    let lines=wrap('Day notes: '+note,content-24,m.size);
+    let lines=measure('Day notes: '+note,content-24,m.size).slice();
     if(lines.length>cap){lines=lines.slice(0,cap);lines[lines.length-1]=clip(lines[lines.length-1]);}
     blocks.push({kind:'note',lines,height:lines.length*m.line+m.notePad});
    }
@@ -87,13 +100,23 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  // Tried in order at each size: give up the roomy frame first, then put site and
  // notes on one line, then the per-day totals — every row's own hours stay.
  const shapes=[[ROOMY,false,'rows'],[COMPACT,false,'fold'],[ROOMY,true,'rows'],[COMPACT,true,'fold'],[COMPACT,true,'none']];
- const fit=cap=>{
-  for(let k=SCALE_MAX;k>=SCALE_MIN-1e-9;k-=.02)
-   for(const [L,joined,totals] of shapes){const attempt=plan(L,k,cap,joined,totals);if(attempt.height<=attempt.budget)return attempt;}
+ // Always ends on `to`, so the smallest size is never skipped by the step.
+ const sizes=(from,to,step)=>{const out=[];for(let k=from;k>to+1e-9;k-=step)out.push(k);out.push(to);return out;};
+ const scan=(cap,from,to,step)=>{
+  for(const k of sizes(from,to,step))
+   for(const [L,joined,totals] of shapes){const attempt=plan(L,k,cap,joined,totals);if(attempt.height<=attempt.budget)return{attempt,k};}
   return null;
  };
+ // Coarse pass to bracket the size, fine pass to land on it: the same answer as
+ // stepping through every size, at a fraction of the layout work.
+ const fit=cap=>{
+  const coarse=scan(cap,SCALE_MAX,SCALE_MIN,.1);
+  if(!coarse)return null;
+  const fine=scan(cap,Math.min(SCALE_MAX,coarse.k+.08),coarse.k,.02);
+  return (fine||coarse).attempt;
+ };
  let chosen=fit(Infinity);
- for(let cap=12;cap>=1&&!chosen;cap--)chosen=fit(cap);
+ for(const cap of [8,4,2,1]){if(chosen)break;chosen=fit(cap);}
  let hidden=0;
  if(!chosen){
   chosen=plan(COMPACT,SCALE_MIN,1,true,'none');
