@@ -14,6 +14,12 @@ Import this repository in Vercel, select framework **Other**, and use output dir
 
 The app saves entries in browser storage. PDF export, preview and printing work. **Send to accounts** emails the PDF in one click once the send service is deployed and connected — see `SENDING.md`. Until then the button points you at Settings and "Email by hand" opens a pre-filled Gmail draft for you to attach the downloaded PDF yourself. Cloud sign-in, device sync and scheduled unattended sending are still not implemented.
 
+## Keeping hours safe
+
+Hours live in this browser, per employer. A new week opens empty every Monday, so when the week on screen has none, the week bar points at the nearest week that does: “← Week ending 20 Sept has 23.50 hours”. **Recover hours** lists everything still stored on the device — other employer profiles, submitted snapshots, the previous storage key and the automatic backups taken before every save — and restores any of it into the employer in view.
+
+**Save backup file** writes every employer, entry, note and snapshot to a JSON file. **Restore from file** merges one back in on any browser or device: it only fills gaps, so a slot edited here keeps the edit and restoring twice changes nothing. That file is the only copy that survives cleared site data or a lost device — cloud sync is still not implemented.
+
 ## Send to accounts
 
 One click builds the weekly PDF, posts it to the `send-timesheet` Supabase Edge Function, and that function emails it from `projects@gradcon.com.au` through the Gmail API, archives it in the private `timesheet-pdfs` bucket, and logs the send. The browser holds only its own send token; no Google credential and no service-role key ever reaches the page. Setup steps are in `SENDING.md`; the function is in `supabase/functions/send-timesheet/`.

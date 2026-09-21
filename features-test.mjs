@@ -57,3 +57,40 @@ const locked=migrate({entries:{},submitted:{[weekKey('2026-09-14')]:true}});
 assert.throws(()=>restoreWeek(locked,found[0]),/Reopen this timesheet/);
 assert.equal(iso(parseDate(found[0].key)),'2026-09-14');
 console.log('PASS: recovery finds stored hours in other profiles, snapshots and backups, and restores them safely.');
+
+// A backup file carries every employer, and restoring only fills gaps.
+import {backupPayload,mergeBackup} from './dist/core.mjs';
+const source=migrate({activeCompany:'gradcon',settings:{employer:'Gradcon Concrete Constructions'},
+ entries:{'2026-09-14':[{id:'a',start:'07:00',finish:'15:00',manual:'',site:'Rosebud',notes:''},
+                        {id:'b',start:'16:00',finish:'18:00',manual:'',site:'Rye',notes:''}],
+          '2026-09-15':[{id:'c',kind:'summary',manual:'8'}]},
+ dayNotes:{'2026-09-14':'Pour delayed'},submitted:{'2026-09-14':true},
+ companies:{other:{settings:{employer:'Second employer'},entries:{'2026-09-21':[{id:'d',start:'08:00',finish:'12:00',manual:''}]},submitted:{},dayNotes:{},dayNotesIncluded:{},history:[],scheduleOverrides:{}}}});
+const file=JSON.parse(JSON.stringify(backupPayload(source)));
+assert.equal(file.format,'gradcon-timesheet-backup');
+assert.deepEqual(Object.keys(file.companies).sort(),['gradcon','other']);
+
+// An empty browser gets everything back.
+const fresh=migrate(null);
+const {state:recoveredState,report}=mergeBackup(fresh,file);
+assert.equal(report.slots,4,'every slot comes back — three here plus the second employer’s one');
+assert.equal(report.employers,1,'the second employer profile comes back');
+assert.equal(report.weeks,2);
+assert.equal(dailyTotal(recoveredState.entries['2026-09-14']).toFixed(2),'10.00');
+assert.equal(recoveredState.dayNotes['2026-09-14'],'Pour delayed');
+assert.equal(recoveredState.submitted['2026-09-14'],true);
+assert.equal(recoveredState.companies.other.entries['2026-09-21'].length,1);
+
+// Restoring twice adds nothing, and never disturbs what is already there.
+const {report:again}=mergeBackup(recoveredState,file);
+assert.equal(again.slots,0,'a second restore is a no-op');
+assert.equal(again.employers,0);
+const edited=structuredClone(recoveredState);
+edited.entries['2026-09-14']=[{id:'a',start:'06:00',finish:'15:00',manual:'',site:'Rosebud',notes:''}];
+edited.dayNotes['2026-09-14']='Edited on this device';
+const {state:kept}=mergeBackup(edited,file);
+assert.equal(kept.entries['2026-09-14'][0].start,'06:00','an edited slot keeps the edit');
+assert.equal(kept.entries['2026-09-14'].length,2,'only the missing slot is added back');
+assert.equal(kept.dayNotes['2026-09-14'],'Edited on this device','a note written here wins');
+assert.throws(()=>mergeBackup(fresh,{format:'something-else'}),/not a timesheet backup/);
+console.log('PASS: backup file carries every employer, restores into an empty browser and never overwrites newer edits.');

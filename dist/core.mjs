@@ -44,6 +44,50 @@ export function restoreWeek(state,week){
  }
  return next;
 }
+// A backup file holds everything this browser knows: every employer profile,
+// its entries, notes, snapshots and settings.
+export function backupPayload(state){
+ const profiles={...state.companies,[state.activeCompany]:companySnapshot(state)};
+ return {format:'gradcon-timesheet-backup',version:1,savedAt:new Date().toISOString(),
+  activeCompany:state.activeCompany,companies:profiles};
+}
+
+// Restoring never overwrites: it fills in what this browser is missing.
+export function mergeBackup(state,payload){
+ if(!payload||payload.format!=='gradcon-timesheet-backup'||!payload.companies)throw Error('That file is not a timesheet backup.');
+ const next=structuredClone(state);
+ next.companies={...next.companies};
+ const report={slots:0,weeks:new Set(),employers:0,notes:0,snapshots:0};
+ const mergeInto=(target,source)=>{
+  for(const [date,list] of Object.entries(source.entries||{})){
+   if(!validDate(date)||!Array.isArray(list)||!list.length)continue;
+   const existing=target.entries[date]||[],ids=new Set(existing.map(e=>e?.id));
+   const seen=new Set(existing.map(e=>[e?.start,e?.finish,e?.manual,e?.site,e?.notes].join('|')));
+   const extra=list.filter(Boolean).filter(e=>!ids.has(e.id)&&!seen.has([e.start,e.finish,e.manual,e.site,e.notes].join('|')));
+   if(!extra.length)continue;
+   target.entries[date]=[...existing,...extra].sort((a,b)=>(a.start||'').localeCompare(b.start||''));
+   report.slots+=extra.length;report.weeks.add(weekKey(date));
+  }
+  for(const [date,note] of Object.entries(source.dayNotes||{}))
+   if(note&&!String(target.dayNotes?.[date]||'').trim()){(target.dayNotes??={})[date]=note;report.notes++;}
+  for(const [date,included] of Object.entries(source.dayNotesIncluded||{}))
+   if(target.dayNotesIncluded?.[date]===undefined)(target.dayNotesIncluded??={})[date]=included;
+  for(const [week,value] of Object.entries(source.submitted||{}))if(value)(target.submitted??={})[week]=true;
+  for(const [week,value] of Object.entries(source.sent||{}))if(value&&!target.sent?.[week])(target.sent??={})[week]=value;
+  const known=new Set((target.history||[]).map(h=>h?.id));
+  for(const record of source.history||[])if(record?.id&&!known.has(record.id)){(target.history??=[]).push(record);report.snapshots++;}
+ };
+ for(const [id,profile] of Object.entries(payload.companies)){
+  if(!profile)continue;
+  if(id===next.activeCompany){mergeInto(next,profile);continue;}
+  if(next.companies[id]){const copy=structuredClone(next.companies[id]);mergeInto(copy,profile);next.companies[id]=copy;}
+  else{next.companies[id]=structuredClone(profile);report.employers++;
+   for(const date of Object.keys(profile.entries||{}))if(validDate(date)&&profile.entries[date]?.length)report.weeks.add(weekKey(date));
+   report.slots+=Object.values(profile.entries||{}).reduce((n,list)=>n+(list?.length||0),0);}
+ }
+ return {state:next,report:{...report,weeks:report.weeks.size}};
+}
+
 export function appendSlot(state,date,slot){validateSlot({...slot,date});return {...state,entries:{...state.entries,[date]:[...(state.entries[date]||[]),slot]}};}
 export function weekKey(date){return iso(monday(parseDate(date)));}
 export function ensureUnlocked(state,date){if(state.submitted[weekKey(date)])throw Error('Reopen this timesheet before editing its slots.');}

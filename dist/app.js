@@ -1,8 +1,11 @@
-import {migrate,iso,parseDate,monday,add,hours,dailyTotal,validateSlot,validDate,appendSlot,ensureUnlocked,overlaps,companySnapshot,switchCompany,recoveryCandidates,restoreWeek} from './core.mjs';
+import {migrate,iso,parseDate,monday,add,hours,dailyTotal,validateSlot,validDate,appendSlot,ensureUnlocked,overlaps,companySnapshot,switchCompany,recoveryCandidates,restoreWeek,weekKey,backupPayload,mergeBackup} from './core.mjs';
 import {createTimesheetPdf} from './pdf.mjs';
 import {submissionSchedule} from './automation.mjs';
 import {sendConfigured,sendPayload,deliver} from './send.mjs';
-const $=id=>document.getElementById(id),esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const absent={textContent:'',innerHTML:'',value:'',checked:false,disabled:false,hidden:true,files:[],style:{},
+ classList:{add(){},remove(){}},addEventListener(){},removeAttribute(){},setAttribute(){},getAttribute:()=>null,
+ showModal(){},close(){},click(){},focus(){},querySelectorAll:()=>[]};
+const $=id=>document.getElementById(id)||absent,esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const STORAGE='gradcon-timesheet-v2',LEGACY='gradcon-timesheet-v1',BACKUPS='gradcon-timesheet-backups',BACKUP_LIMIT=6;
 const readStore=key=>{try{return JSON.parse(localStorage.getItem(key)||'null');}catch{return null;}};
 const readBackups=()=>{const list=readStore(BACKUPS);return Array.isArray(list)?list:[];};
@@ -23,6 +26,18 @@ function persist(next,redraw=true){if(storageError)throw Error('Stored data coul
  state=next;if(redraw)render();}
 function transact(action){try{action();}catch(e){toast(e.message||'Unable to save. Your existing data has not changed.');}}
 function weekSlots(){return Array.from({length:7},(_,i)=>slots(iso(add(selected,i)))).flat();}
+// Most “lost hours” are simply a week away — a new week opens empty every Monday.
+function nearestWeekWithHours(){
+ const weeks=new Map();
+ for(const [date,list] of Object.entries(state.entries||{})){
+  if(!validDate(date)||!list?.length)continue;
+  const key=weekKey(date);weeks.set(key,(weeks.get(key)||0)+dailyTotal(list));
+ }
+ weeks.delete(iso(selected));
+ let best=null;
+ for(const [key,total] of weeks){const gap=Math.abs(parseDate(key)-selected);if(!best||gap<best.gap)best={key,total,gap};}
+ return best;
+}
 function getStatus(){if(state.submitted[iso(selected)])return 'Submitted';return iso(new Date())>=iso(add(selected,8))?'Ready to submit':'In progress';}
 function render(){
  document.body?.setAttribute?.('data-theme',state.settings.theme||'blue');document.body?.setAttribute?.('data-density',state.settings.density||'comfortable');
@@ -35,6 +50,9 @@ function render(){
  const scheduled=submissionSchedule(state,selected);const sun=add(selected,6),entries=weekSlots(),total=dailyTotal(entries),locked=!!state.submitted[iso(selected)];
  $('weekTitle').textContent=fmt(selected)+' – '+fmt(sun,{day:'numeric',month:'short',year:'numeric'});
  $('ending').textContent=fmt(sun,{weekday:'short',day:'numeric',month:'short'});$('submission').textContent=fmt(parseDate(scheduled.date),{weekday:'short',day:'numeric',month:'short'})+' · '+scheduled.time;$('payment').textContent=fmt(add(selected,9),{weekday:'short',day:'numeric',month:'short'});
+ const elsewhere=entries.length?null:nearestWeekWithHours();
+ $('elsewhere').hidden=!elsewhere;
+ if(elsewhere)$('elsewhere').textContent='\u2190 Week ending '+fmt(add(parseDate(elsewhere.key),6),{day:'numeric',month:'short'})+' has '+elsewhere.total.toFixed(2)+' hours';
  $('totalHours').innerHTML=total.toFixed(2)+' <small>hrs</small>';$('totalDetail').textContent=entries.length+' time '+(entries.length===1?'slot':'slots')+' recorded';$('footerTotal').textContent=total.toFixed(2)+' hours';$('status').textContent=getStatus();$('status').className='badge'+(locked?' submitted':'');$('submitBtn').textContent=locked?'Reopen timesheet':'Mark as submitted';$('copyWeek').disabled=locked;$('addEntry').disabled=locked;
  $('days').innerHTML=Array.from({length:7},(_,i)=>{
  const d=add(selected,i),key=iso(d),list=slots(key),today=key===iso(new Date());
@@ -149,6 +167,7 @@ $('mailDownload').onclick=downloadPdf;
 $('emailForm').onsubmit=e=>{e.preventDefault();const fields=['mailFrom','mailTo','mailBcc','mailSubject'];if(fields.some(id=>/[\r\n]/.test($(id).value))){toast('Email headers must be a single line.');return;}const next=structuredClone(state);next.settings.sender=$('mailFrom').value.trim();next.settings.recipient=$('mailTo').value.trim();next.settings.bcc=$('mailBcc').value.trim();try{persist(next);}catch(error){toast(error.message);return;}const params=new URLSearchParams({authuser:$('mailFrom').value.trim(),view:'cm',fs:'1',to:$('mailTo').value.trim(),bcc:$('mailBcc').value.trim(),su:$('mailSubject').value,body:$('mailBody').value});window.open('https://mail.google.com/mail/?'+params.toString(),'_blank','noopener,noreferrer');toast('Attach the PDF in Gmail, check sender and BCC, then press Send.');};
 
 function openHistory(){const records=[...(state.history||[])].reverse();const legacy=Object.keys(state.submitted).filter(w=>!records.some(h=>h.week===w));$('historyList').innerHTML=records.map(h=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(h.week),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Marked submitted · Revision '+h.revision+'<br>'+esc(new Date(h.savedAt).toLocaleString('en-AU'))+'</p></div><div><button class="btn" data-history-week="'+esc(h.week)+'">Open week</button><button class="btn primary" data-history-pdf="'+esc(h.id)+'">Saved PDF</button></div></article>').join('')+legacy.map(w=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(w),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Previously marked submitted · No saved PDF snapshot</p></div><button class="btn" data-history-week="'+esc(w)+'">Open week</button></article>').join('')||'<p>No submissions yet. Mark a completed week as submitted to save a PDF snapshot here.</p>';$('historyDialog').showModal();}
+$('elsewhere').onclick=()=>{const near=nearestWeekWithHours();if(!near)return;selected=parseDate(near.key);render();toast('Opened the week ending '+fmt(add(parseDate(near.key),6),{day:'numeric',month:'short'}));};
 $('navHistory').onclick=openHistory;
 let recoverable=[];
 function openRecover(){
@@ -157,6 +176,28 @@ function openRecover(){
  $('recoverDialog').showModal();
 }
 $('recoverBtn').onclick=openRecover;
+$('backupSave').onclick=()=>{
+ try{
+  const payload=backupPayload(state),blob=new Blob([JSON.stringify(payload,null,1)],{type:'application/json'});
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download='Gradcon-timesheet-backup-'+iso(new Date())+'.json';a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+  toast('Backup saved. Keep it somewhere outside this browser.');
+ }catch(e){toast('Backup could not be created: '+e.message);}
+};
+$('backupRestore').onclick=()=>$('backupFile').click();
+$('backupFile').onchange=async e=>{
+ const file=e.target.files?.[0];if(!file)return;
+ e.target.value='';
+ try{
+  const {state:restored,report}=mergeBackup(state,JSON.parse(await file.text()));
+  if(!report.slots&&!report.employers&&!report.snapshots){toast('That backup holds nothing this browser is missing.');return;}
+  persist(restored);
+  const near=nearestWeekWithHours();if(!weekSlots().length&&near){selected=parseDate(near.key);render();}
+  openRecover();
+  toast('Restored '+report.slots+' time '+(report.slots===1?'slot':'slots')+' across '+report.weeks+' '+(report.weeks===1?'week':'weeks')+(report.employers?' and '+report.employers+' employer profile'+(report.employers===1?'':'s'):'')+'. Nothing already here was changed.');
+ }catch(error){toast('That file could not be restored: '+error.message);}
+};
 $('recoverList').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
  if(b.dataset.recoverWeek){selected=parseDate(b.dataset.recoverWeek);render();$('recoverDialog').close();return;}
  if(!b.dataset.recover)return;const week=recoverable[Number(b.dataset.recover)];if(!week)return;
