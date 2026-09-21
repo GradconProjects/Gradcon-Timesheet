@@ -29,6 +29,11 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  const value=v=>String(v??'').trim(),join=(parts,sep)=>parts.map(value).filter(Boolean).join(sep);
  let logo=null;
  if(show('logo')&&/^data:image\/(png|jpeg);base64,/.test(s.logo||'')){try{logo=s.logo.startsWith('data:image/png')?await doc.embedPng(s.logo):await doc.embedJpg(s.logo);}catch{throw Error('The employer logo could not be embedded. Replace or remove it in employer details.');}}
+ let signature=null;
+ if(show('signature')&&/^data:image\/(png|jpeg);base64,/.test(s.signature||'')){
+  try{signature=s.signature.startsWith('data:image/png')?await doc.embedPng(s.signature):await doc.embedJpg(s.signature);}
+  catch{throw Error('Your signature image could not be embedded. Replace or delete it in Settings.');}
+ }
  const dayEntries=i=>state.entries[iso(add(week,i))]||[],all=Array.from({length:7},(_,i)=>dayEntries(i)).flat();
  const cleaned=new Map();
  const clean=value=>{
@@ -60,7 +65,7 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  // Height of everything fixed: identity rows, period band, totals, signature.
  const identity=L=>[0,1].reduce((sum,r)=>sum+Math.max(...[0,1].map(c=>L.fieldBase+wrap(fields[r*2+c][1],content/2-20,L.fieldSize,bold).length*L.fieldLine)),0);
  const frame=L=>({top:L.bodyTop+identity(L)+L.bandAdvance,
-  tail:L.totalGap+L.totalAdvance+(adjusted?15:0)+(show('signature')?L.signature:0)});
+  tail:L.totalGap+L.totalAdvance+(adjusted?15:0)+(show('signature')?L.signature+(signature?28:0):0)});
 
  const metrics=(L,k)=>({size:Math.max(SIZE_MIN,9*k),head:Math.max(6.5,8*k),line:Math.max(7,12*k),pad:12*k,
   min:Math.max(L.rowFloor,28*k),gap:Math.max(L.rowFloor,24*k),notePad:Math.max(10,18*k),header:Math.max(15,24*k)});
@@ -191,7 +196,17 @@ export async function createTimesheetPdf(state,week,api=globalThis.PDFLib){
  text(total,B-bold.widthOfTextAtSize(total,L.totalSize)-15,y+(L.totalBand-L.totalSize)/2-2,L.totalSize,bold,white);
  y+=L.totalAdvance;
  if(adjusted){text('* Manually adjusted hours.',M,y,8,regular,gray);y+=15;}
- if(show('signature')){text('Employee approval / signature',M,y+L.signature/4,8,regular,gray);text('Date',B-110,y+L.signature/4,8,regular,gray);y+=L.signature;rule(y);}
+ if(show('signature')){
+  if(signature){
+   const scale=Math.min(190/signature.width,(L.signature-6)/signature.height,1.2);
+   page.drawImage(signature,{x:M,y:H-y-signature.height*scale-2,width:signature.width*scale,height:signature.height*scale});
+   text(format(new Date()),B-110,y+L.signature/4,9,regular,navy);
+   y+=Math.max(L.signature,signature.height*scale+6);
+  }else y+=L.signature;
+  rule(y);
+  text('Employee approval / signature',M,y+4,8,regular,gray);text('Date',B-110,y+4,8,regular,gray);
+  y+=18;
+ }
  rule(H-49);text('WEEK ENDING '+format(sun).toUpperCase(),M,H-35,7,regular,gray);
  doc.setTitle('Timesheet - '+(s.name||'Gradcon')+' - '+iso(sun));doc.setAuthor(s.name||s.employer);doc.setSubject('Weekly hours for '+s.employer);
  return {bytes:await doc.save(),filename:'Timesheet-'+(s.name||'Gradcon').replace(/[^a-z0-9]+/gi,'-')+'-WE-'+iso(sun)+'.pdf',

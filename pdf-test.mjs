@@ -88,3 +88,27 @@ assert.equal((await api.PDFDocument.load(dense.bytes)).getPageCount(),1,'35 slot
 assert.ok(elapsed<3000,'the layout search took '+elapsed+'ms; it must stay well under a second of browser time');
 fs.writeFileSync('test-output/pdf-heavy.pdf',dense.bytes);
 console.log('PDF: a heavy week lays out in '+elapsed+'ms on one page.');
+
+// A signature image prints on the approval line, and deleting it leaves the
+// line blank to sign by hand.
+const signatureImage='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+const signed=migrate({settings:{name:'Boma Ipalibo',signature:signatureImage},
+ entries:{'2026-09-14':[{id:'s1',start:'07:00',finish:'15:00',manual:'',site:'Rosebud',notes:'Slab'}]}});
+const withSignature=await createTimesheetPdf(signed,new Date('2026-09-14T12:00:00'),api);
+assert.equal((await api.PDFDocument.load(withSignature.bytes)).getPageCount(),1,'a signed sheet is still one page');
+const drawnImages=bytes=>{const buf=Buffer.from(bytes);let content='',i=0;
+ while((i=buf.indexOf('stream',i))!==-1){let start=i+6;if(buf[start]===13)start++;if(buf[start]===10)start++;
+  const end=buf.indexOf('endstream',start);if(end===-1)break;
+  try{content+=zlib.inflateSync(buf.subarray(start,end)).toString('latin1');}catch{}i=end+9;}
+ return (content.match(/\/Image[^\s]*\s+Do/g)||[]).length;};
+assert.equal(drawnImages(withSignature.bytes),1,'the signature is drawn on the page');
+fs.writeFileSync('test-output/pdf-signed.pdf',withSignature.bytes);
+
+// Deleting it (an empty setting) draws no image at all.
+const unsigned=migrate({settings:{name:'Boma Ipalibo',signature:''},entries:signed.entries});
+assert.equal(drawnImages((await createTimesheetPdf(unsigned,new Date('2026-09-14T12:00:00'),api)).bytes),0,'a deleted signature leaves the line blank');
+
+// Turning the approval line off in PDF preferences hides the signature too.
+const hidden=migrate({settings:{name:'Boma Ipalibo',signature:signatureImage,pdf:{signature:false}},entries:signed.entries});
+assert.equal(drawnImages((await createTimesheetPdf(hidden,new Date('2026-09-14T12:00:00'),api)).bytes),0,'no approval line means no signature');
+console.log('PDF: signature prints when set, and vanishes when deleted or switched off.');

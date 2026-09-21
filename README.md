@@ -14,6 +14,14 @@ Import this repository in Vercel, select framework **Other**, and use output dir
 
 The app saves entries in browser storage. PDF export, preview and printing work. **Send to accounts** emails the PDF in one click once the send service is deployed and connected — see `SENDING.md`. Until then the button points you at Settings and "Email by hand" opens a pre-filled Gmail draft for you to attach the downloaded PDF yourself. Cloud sign-in, device sync and scheduled unattended sending are still not implemented.
 
+## Saving a week
+
+Entries save the moment you press **Save hours** in the slot editor — there is no unsaved state to lose. The ledger footer says so in words (“Saved 3 minutes ago”), and **Save this week** stamps the week again and pushes it to your other devices when a workspace is connected. **History → Saved weeks** lists every week that has hours, with its total, when it was saved and whether it was submitted or emailed; open any of them, or export its PDF straight from the list.
+
+## Your signature
+
+Settings takes a PNG or JPEG of your signature (up to 1 MB) alongside the company logo. It prints on the approval line of the PDF with the date beside it, and **Delete signature** removes it so the line prints blank to sign by hand. Switching the approval line off in PDF appearance hides both. The signature is stored with the employer profile, so it travels with sync and backups.
+
 ## Sync across devices
 
 Settings → **Sync across devices** holds a workspace code. Create one on the device that already has your hours, then paste the same code into Settings on your phone or laptop: every device holding it keeps the same timesheet. Each device pulls what the workspace has, merges it without overwriting anything entered locally, and pushes the union back — so entries made on two devices both survive, and a slot deleted on one is deleted on the other rather than reappearing. Syncing runs after every save, when the tab comes back to the foreground, and when the network returns; the week bar shows the state.

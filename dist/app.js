@@ -1,4 +1,4 @@
-import {migrate,iso,parseDate,monday,add,hours,dailyTotal,validateSlot,validDate,appendSlot,ensureUnlocked,overlaps,companySnapshot,switchCompany,recoveryCandidates,restoreWeek,weekKey,backupPayload,mergeBackup,markRemoved} from './core.mjs';
+import {migrate,iso,parseDate,monday,add,hours,dailyTotal,validateSlot,validDate,appendSlot,ensureUnlocked,overlaps,companySnapshot,switchCompany,recoveryCandidates,restoreWeek,weekKey,backupPayload,mergeBackup,markRemoved,savedWeeks,touchWeek} from './core.mjs';
 import {createTimesheetPdf} from './pdf.mjs';
 import {submissionSchedule} from './automation.mjs';
 import {sendConfigured,sendPayload,deliver} from './send.mjs';
@@ -17,7 +17,7 @@ function rememberHours(current){try{const entries=current?.entries||{};if(!Objec
  localStorage.setItem(BACKUPS,JSON.stringify(list.slice(0,BACKUP_LIMIT)));}catch{}}
 let state,storageError=false;
 try{state=migrate(JSON.parse(localStorage.getItem(STORAGE)||localStorage.getItem(LEGACY)||'null'));}catch{state=migrate(null);storageError=true;}
-let selected=monday(new Date()),editing=null,newEmployer=false,pendingLogo='';
+let selected=monday(new Date()),editing=null,newEmployer=false,pendingLogo='',pendingSignature='';
 const fmt=(d,options={day:'numeric',month:'short'})=>d.toLocaleDateString('en-AU',options),slots=date=>state.entries[date]||[];
 function toast(message){$('toast').textContent=message;$('toast').classList.add('show');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').classList.remove('show'),4000);}
 function persist(next,redraw=true){if(storageError)throw Error('Stored data could not be read. Please allow browser storage and reload before saving.');
@@ -40,6 +40,14 @@ function nearestWeekWithHours(){
  for(const [key,total] of weeks){const gap=Math.abs(parseDate(key)-selected);if(!best||gap<best.gap)best={key,total,gap};}
  return best;
 }
+function since(when){
+ const moment=new Date(when);if(Number.isNaN(+moment))return 'just now';
+ const minutes=Math.round((Date.now()-moment)/60000);
+ if(minutes<1)return 'just now';
+ if(minutes<60)return minutes+' minute'+(minutes===1?'':'s')+' ago';
+ if(minutes<1440)return Math.round(minutes/60)+' hour'+(Math.round(minutes/60)===1?'':'s')+' ago';
+ return 'on '+moment.toLocaleString('en-AU',{weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit'});
+}
 function getStatus(){if(state.submitted[iso(selected)])return 'Submitted';return iso(new Date())>=iso(add(selected,8))?'Ready to submit':'In progress';}
 function render(){
  document.body?.setAttribute?.('data-theme',state.settings.theme||'blue');document.body?.setAttribute?.('data-density',state.settings.density||'comfortable');
@@ -55,6 +63,9 @@ function render(){
  const elsewhere=entries.length?null:nearestWeekWithHours();
  $('elsewhere').hidden=!elsewhere;$('prefillWeek').hidden=!elsewhere||locked;
  if(elsewhere)$('elsewhere').textContent='\u2190 Week ending '+fmt(add(parseDate(elsewhere.key),6),{day:'numeric',month:'short'})+' has '+elsewhere.total.toFixed(2)+' hours';
+ const savedAt=state.savedWeeks?.[iso(selected)];
+ $('savedLine').textContent=entries.length?(savedAt?'Saved '+since(savedAt)+(validWorkspace(workspace())?' \u00b7 synced to your other devices':' \u00b7 in this browser'):'Saved in this browser'):'Nothing entered for this week yet';
+ $('saveWeek').disabled=!entries.length||locked;
  $('totalHours').innerHTML=total.toFixed(2)+' <small>hrs</small>';$('totalDetail').textContent=entries.length+' time '+(entries.length===1?'slot':'slots')+' recorded';$('footerTotal').textContent=total.toFixed(2)+' hours';$('status').textContent=getStatus();$('status').className='badge'+(locked?' submitted':'');$('submitBtn').textContent=locked?'Reopen timesheet':'Mark as submitted';$('copyWeek').disabled=locked;$('addEntry').disabled=locked;
  $('days').innerHTML=Array.from({length:7},(_,i)=>{
  const d=add(selected,i),key=iso(d),list=slots(key),today=key===iso(new Date());
@@ -73,28 +84,49 @@ function saveSlot(data,old=null,replaceDay=false){
  if(replaceDay)next.entries[data.date]=[];
  if((next.entries[data.date]||[]).some(e=>e.kind==='summary')||(data.kind==='summary'&&(next.entries[data.date]||[]).length))throw Error('Switch this day’s entry mode in the editor before adding hours.');
  if(overlaps(next,data.date,data,old?.id))throw Error('This time overlaps an existing slot. Adjust the times to avoid counting hours twice.');
- const {date,...entry}=data;entry.id=old?.id||crypto.randomUUID();next.entries[date]=[...(next.entries[date]||[]),entry].sort((a,b)=>(a.start||'').localeCompare(b.start||''));persist(next);return entry;
+ const {date,...entry}=data;entry.id=old?.id||crypto.randomUUID();next.entries[date]=[...(next.entries[date]||[]),entry].sort((a,b)=>(a.start||'').localeCompare(b.start||''));next.savedWeeks=touchWeek(next,date);persist(next);return entry;
 }
 function submitEntry(event){event.preventDefault();try{const d=draft();validateSlot(d);ensureUnlocked(state,d.date);if(editing)ensureUnlocked(state,editing.date);const other=slots(d.date).filter(e=>e.id!==editing?.id);const replace=d.kind==='summary'?other.length>0:other.some(e=>e.kind==='summary');if(replace&&!confirm('Replace existing entries for this day with '+(d.kind==='summary'?'one daily summary':'split time slots')+'? This prevents double counting.'))return;saveSlot(d,editing,replace);selected=monday(parseDate(d.date));render();$('entryDialog').close();toast('Time slot saved');}catch(e){$('entryError').textContent=e.message;}}
-function deleteEntry(){if(!editing)return;if(!confirm('Delete this time slot? Other slots on this day will be kept.'))return;transact(()=>{ensureUnlocked(state,editing.date);const next=structuredClone(state);next.entries[editing.date]=slots(editing.date).filter(e=>e.id!==editing.id);next.removed=markRemoved(next,editing.id);persist(next);$('entryDialog').close();toast('Time slot deleted');});}
+function deleteEntry(){if(!editing)return;if(!confirm('Delete this time slot? Other slots on this day will be kept.'))return;transact(()=>{ensureUnlocked(state,editing.date);const next=structuredClone(state);next.entries[editing.date]=slots(editing.date).filter(e=>e.id!==editing.id);next.removed=markRemoved(next,editing.id);next.savedWeeks=touchWeek(next,editing.date);persist(next);$('entryDialog').close();toast('Time slot deleted');});}
 const settingsFields=[['name','Your name'],['employee','Employee / contractor no.'],['employer','Employer display name'],['legal','Legal entity'],['abn','ABN'],['phone','Phone'],['email','Email'],['location','Location'],['tag','Company tag'],['sender','Sender email'],['recipient','Accounts email(s)'],['bcc','BCC email(s) — optional']];
 const pdfFields=[['logo','Company logo'],['employer','Employer name'],['legal','Legal name and ABN'],['employee','Employee / contractor number'],['schedule','Submission and payment dates'],['times','Start and finish times'],['sites','Site / job names'],['slotNotes','Slot descriptions / notes'],['dayNotes','Day notes marked for inclusion'],['signature','Approval / signature line']];
 function openSettings(){newEmployer=false;showSettings(state.settings);}
-function showSettings(values){pendingLogo=values.logo||'';$('scheduleDay').value=String(values.schedule?.weekday??2);$('scheduleTime').value=values.schedule?.time||'23:00';$('fallbackHours').value=values.schedule?.fallbackHours??6;$('scheduleDate').value=newEmployer?'':state.scheduleOverrides?.[iso(selected)]||'';$('pdfOptions').innerHTML=pdfFields.map(([key,label])=>'<label class="pref-toggle"><input type="checkbox" id="pdf-'+key+'"'+(values.pdf?.[key]!==false?' checked':'')+'> '+label+'</label>').join('');$('workspaceCode').value=values.workspace||'';$('syncNote').textContent=values.workspace?'Connected. Hours merge with every device holding this code.':'Not connected \u2014 hours stay in this browser only.';$('sendEndpoint').value=values.sendEndpoint||'';$('sendToken').value=values.sendToken||'';$('sendCheck').textContent='';$('themeChoice').value=values.theme||'blue';$('densityChoice').value=values.density||'comfortable';$('logoUpload').value='';$('logoStatus').textContent=pendingLogo?'Logo attached':'Upload your company’s actual logo, or add it later.';$('settingsFields').innerHTML=settingsFields.map(([key,label])=>'<label>'+label+'<input name="'+key+'" id="setting-'+key+'" type="'+(['email','sender','recipient','bcc'].includes(key)?'email':'text')+'"'+(['recipient','bcc'].includes(key)?' multiple':'')+' maxlength="300" value="'+esc(values[key]||'')+'"'+(['employer','sender','recipient'].includes(key)?' required':'')+'></label>').join('');$('settingsDialog').showModal();}
-function saveSettings(e){e.preventDefault();transact(()=>{const next=structuredClone(state);if(newEmployer){next.companies[next.activeCompany]=companySnapshot(next);next.activeCompany=crypto.randomUUID();next.settings={};next.entries={};next.submitted={};next.dayNotes={};next.dayNotesIncluded={};next.history=[];next.scheduleOverrides={};}for(const [key] of settingsFields)next.settings[key]=$('setting-'+key).value.trim();next.settings.logo=pendingLogo;next.settings.pdf=Object.fromEntries(pdfFields.map(([key])=>[key,$('pdf-'+key).checked]));const code=$('workspaceCode').value.trim();
+function showSettings(values){pendingLogo=values.logo||'';pendingSignature=values.signature||'';$('scheduleDay').value=String(values.schedule?.weekday??2);$('scheduleTime').value=values.schedule?.time||'23:00';$('fallbackHours').value=values.schedule?.fallbackHours??6;$('scheduleDate').value=newEmployer?'':state.scheduleOverrides?.[iso(selected)]||'';$('pdfOptions').innerHTML=pdfFields.map(([key,label])=>'<label class="pref-toggle"><input type="checkbox" id="pdf-'+key+'"'+(values.pdf?.[key]!==false?' checked':'')+'> '+label+'</label>').join('');$('workspaceCode').value=values.workspace||'';$('syncNote').textContent=values.workspace?'Connected. Hours merge with every device holding this code.':'Not connected \u2014 hours stay in this browser only.';$('sendEndpoint').value=values.sendEndpoint||'';$('sendToken').value=values.sendToken||'';$('sendCheck').textContent='';$('themeChoice').value=values.theme||'blue';$('densityChoice').value=values.density||'comfortable';$('logoUpload').value='';$('logoStatus').textContent=pendingLogo?'Logo attached':'Upload your company’s actual logo, or add it later.';$('signatureUpload').value='';$('signatureStatus').textContent=pendingSignature?'Signature attached. It prints on the approval line.':'No signature yet — the PDF leaves the line blank to sign by hand.';showSignature();$('settingsFields').innerHTML=settingsFields.map(([key,label])=>'<label>'+label+'<input name="'+key+'" id="setting-'+key+'" type="'+(['email','sender','recipient','bcc'].includes(key)?'email':'text')+'"'+(['recipient','bcc'].includes(key)?' multiple':'')+' maxlength="300" value="'+esc(values[key]||'')+'"'+(['employer','sender','recipient'].includes(key)?' required':'')+'></label>').join('');$('settingsDialog').showModal();}
+function saveSettings(e){e.preventDefault();transact(()=>{const next=structuredClone(state);if(newEmployer){next.companies[next.activeCompany]=companySnapshot(next);next.activeCompany=crypto.randomUUID();next.settings={};next.entries={};next.submitted={};next.dayNotes={};next.dayNotesIncluded={};next.history=[];next.scheduleOverrides={};}for(const [key] of settingsFields)next.settings[key]=$('setting-'+key).value.trim();next.settings.logo=pendingLogo;next.settings.signature=pendingSignature;next.settings.pdf=Object.fromEntries(pdfFields.map(([key])=>[key,$('pdf-'+key).checked]));const code=$('workspaceCode').value.trim();
  if(code&&!validWorkspace(code))throw Error('That workspace code is not valid. Create one, or paste the code from your other device.');
  next.settings.workspace=code;next.settings.sendEndpoint=$('sendEndpoint').value.trim();next.settings.sendToken=$('sendToken').value.trim();next.settings.theme=$('themeChoice').value;next.settings.density=$('densityChoice').value;next.settings.schedule={requested:true,weekday:Number($('scheduleDay').value),time:$('scheduleTime').value,timezone:'Australia/Melbourne',fallbackHours:Number($('fallbackHours').value)};next.scheduleOverrides??={};if($('scheduleDate').value)next.scheduleOverrides[iso(selected)]=$('scheduleDate').value;else delete next.scheduleOverrides[iso(selected)];persist(next);newEmployer=false;$('settingsDialog').close();toast('Employer details saved');});}
 $('newCompany').onclick=()=>{newEmployer=true;showSettings({name:state.settings.name,employee:state.settings.employee,sender:state.settings.sender,bcc:state.settings.bcc});};
 $('companySelect').onchange=e=>transact(()=>persist(switchCompany(state,e.target.value)));
 $('removeLogo').onclick=()=>{pendingLogo='';$('logoUpload').value='';$('logoStatus').textContent='Logo removed. Save details to confirm.';};
-$('logoUpload').onchange=async e=>{const file=e.target.files[0];if(!file)return;if(!['image/png','image/jpeg'].includes(file.type)||file.size>1024*1024){toast('Choose a PNG or JPEG under 1 MB.');return;}try{const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=data;});const canvas=document.createElement('canvas'),scale=Math.min(1,768/Math.max(img.width,img.height));canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);pendingLogo=canvas.toDataURL('image/png');$('logoStatus').textContent='Logo ready. Save details to confirm.';}catch{toast('This image could not be opened. Try another PNG or JPEG.');}};
+async function readImage(file,limit){
+ if(!['image/png','image/jpeg'].includes(file.type)||file.size>1024*1024)throw Error('Choose a PNG or JPEG under 1 MB.');
+ const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
+ const img=new Image();await new Promise((resolve,reject)=>{img.onload=resolve;img.onerror=reject;img.src=data;});
+ const canvas=document.createElement('canvas'),scale=Math.min(1,limit/Math.max(img.width,img.height));
+ canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
+ canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+ return canvas.toDataURL('image/png');
+}
+$('logoUpload').onchange=async e=>{const file=e.target.files[0];if(!file)return;
+ try{pendingLogo=await readImage(file,768);$('logoStatus').textContent='Logo ready. Save details to confirm.';}
+ catch(error){toast(error.message||'This image could not be opened. Try another PNG or JPEG.');}};
+function showSignature(){
+ const has=/^data:image\/(png|jpeg);base64,/.test(pendingSignature||'');
+ $('signaturePreview').hidden=!has;
+ $('signaturePreview').innerHTML=has?'<img alt="Your signature" src="'+esc(pendingSignature)+'">':'';
+ $('removeSignature').hidden=!has;
+}
+$('signatureUpload').onchange=async e=>{const file=e.target.files[0];if(!file)return;
+ try{pendingSignature=await readImage(file,900);$('signatureStatus').textContent='Signature ready. Save details to confirm.';showSignature();}
+ catch(error){toast(error.message||'This image could not be opened. Try another PNG or JPEG.');}};
+$('removeSignature').onclick=()=>{pendingSignature='';$('signatureUpload').value='';$('signatureStatus').textContent='Signature deleted. Save details to confirm.';showSignature();};
 $('days').addEventListener('change',e=>{const date=e.target.dataset?.dayNote||e.target.dataset?.noteInclude;if(!date)return;transact(()=>{ensureUnlocked(state,date);const next=structuredClone(state);if(e.target.dataset.noteInclude){next.dayNotesIncluded??={};next.dayNotesIncluded[date]=e.target.checked;}else{next.dayNotes[date]=e.target.value.trim();}persist(next,false);toast('Day note preferences saved');});});
 function copyPrevious(){transact(()=>{
  const previous=Array.from({length:7},(_,i)=>slots(iso(add(selected,i-7))));if(!previous.flat().length){toast('No time slots in the previous week.');return;}
  if(weekSlots().length&&!confirm('Replace all time slots in this week with the previous week?'))return;
  const next=structuredClone(state);for(let i=0;i<7;i++){const key=iso(add(selected,i));ensureUnlocked(state,key);next.entries[key]=previous[i].map(e=>({...e,id:crypto.randomUUID()}));}
  for(let i=0;i<7;i++){const key=iso(add(selected,i));for(const e of next.entries[key])if(overlaps(next,key,e,e.id))throw Error('Copy would create overlapping slots, including an overnight slot. Edit the affected days individually.');}
- persist(next);toast('Previous week copied');
+ next.savedWeeks=touchWeek(next,iso(selected));persist(next);toast('Previous week copied');
  });}
 function markSubmitted(){transact(()=>{const key=iso(selected),next=structuredClone(state);if(next.submitted[key]){if(!confirm('Reopen this submitted timesheet for editing?'))return;delete next.submitted[key];}else{if(!weekSlots().length){toast('Add a time slot before marking this week as submitted.');return;}if(!confirm('Mark this week as submitted? This records its status; it does not send an email.'))return;next.submitted[key]=true;next.history??=[];const snapshot={settings:structuredClone(next.settings),entries:structuredClone(next.entries),dayNotes:structuredClone(next.dayNotes),dayNotesIncluded:structuredClone(next.dayNotesIncluded),scheduleOverrides:structuredClone(next.scheduleOverrides)};next.history.push({id:crypto.randomUUID(),week:key,savedAt:new Date().toISOString(),revision:next.history.filter(h=>h.week===key).length+1,snapshot});}persist(next);toast(next.submitted[key]?'Marked as submitted':'Timesheet reopened');});}
 const blankable=(parts,sep)=>parts.map(v=>String(v??'').trim()).filter(Boolean).join(sep);
@@ -112,6 +144,13 @@ for(const id of ['navSettings','profileBtn','editEmployer'])$(id).onclick=openSe
 $('prevWeek').onclick=()=>{selected=add(selected,-7);render();};$('nextWeek').onclick=()=>{selected=add(selected,7);render();};
 for(const id of ['thisWeek','navTimesheets'])$(id).onclick=()=>{selected=monday(new Date());render();};
 $('addEntry').onclick=()=>{const today=iso(new Date());openEntry(today>=iso(selected)&&today<=iso(add(selected,6))?today:iso(selected));};
+$('saveWeek').onclick=()=>transact(()=>{
+ if(!weekSlots().length){toast('Add hours to this week before saving it.');return;}
+ const next=structuredClone(state);next.savedWeeks=touchWeek(next,iso(selected));persist(next);
+ const ending=fmt(add(selected,6),{day:'numeric',month:'short',year:'numeric'});
+ if(validWorkspace(workspace())){syncNow('manual');toast('Week ending '+ending+' saved and syncing to your other devices.');}
+ else toast('Week ending '+ending+' saved on this device. Connect a workspace in Settings to keep it on your other devices.');
+});
 $('copyWeek').onclick=copyPrevious;$('submitBtn').onclick=markSubmitted;$('pdfBtn').onclick=downloadPdf;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
 window.addEventListener('storage',e=>{if(e.key===STORAGE&&e.newValue){if($('entryDialog').open||$('settingsDialog').open){toast('Another tab changed this timesheet. Reload before saving to avoid overwriting changes.');storageError=true;return;}try{state=migrate(JSON.parse(e.newValue));render();}catch{toast('Could not read changes from another tab.');}}});
@@ -197,7 +236,12 @@ $('emailBtn').onclick=()=>{if(!weekSlots().length){toast('Add hours before prepa
 $('mailDownload').onclick=downloadPdf;
 $('emailForm').onsubmit=e=>{e.preventDefault();const fields=['mailFrom','mailTo','mailBcc','mailSubject'];if(fields.some(id=>/[\r\n]/.test($(id).value))){toast('Email headers must be a single line.');return;}const next=structuredClone(state);next.settings.sender=$('mailFrom').value.trim();next.settings.recipient=$('mailTo').value.trim();next.settings.bcc=$('mailBcc').value.trim();try{persist(next);}catch(error){toast(error.message);return;}const params=new URLSearchParams({authuser:$('mailFrom').value.trim(),view:'cm',fs:'1',to:$('mailTo').value.trim(),bcc:$('mailBcc').value.trim(),su:$('mailSubject').value,body:$('mailBody').value});window.open('https://mail.google.com/mail/?'+params.toString(),'_blank','noopener,noreferrer');toast('Attach the PDF in Gmail, check sender and BCC, then press Send.');};
 
-function openHistory(){const records=[...(state.history||[])].reverse();const legacy=Object.keys(state.submitted).filter(w=>!records.some(h=>h.week===w));$('historyList').innerHTML=records.map(h=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(h.week),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Marked submitted · Revision '+h.revision+'<br>'+esc(new Date(h.savedAt).toLocaleString('en-AU'))+'</p></div><div><button class="btn" data-history-week="'+esc(h.week)+'">Open week</button><button class="btn primary" data-history-pdf="'+esc(h.id)+'">Saved PDF</button></div></article>').join('')+legacy.map(w=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(w),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Previously marked submitted · No saved PDF snapshot</p></div><button class="btn" data-history-week="'+esc(w)+'">Open week</button></article>').join('')||'<p>No submissions yet. Mark a completed week as submitted to save a PDF snapshot here.</p>';$('historyDialog').showModal();}
+function openHistory(){
+ const weeks=savedWeeks(state);
+ $('weekList').innerHTML=weeks.map(w=>'<article class="week-row"><div><strong>Week ending '+esc(fmt(add(parseDate(w.key),6),{day:'numeric',month:'short',year:'numeric'}))+' \u00b7 '+w.hours.toFixed(2)+' hours</strong><p>'+w.slots+' time '+(w.slots===1?'slot':'slots')+(w.savedAt?' \u00b7 saved '+esc(since(w.savedAt)):'')+(w.submitted?' \u00b7 submitted':'')+(w.sentAt?' \u00b7 emailed':'')+'</p></div><div><button class="btn" data-history-week="'+esc(w.key)+'">Open</button><button class="btn" data-week-pdf="'+esc(w.key)+'">PDF</button></div></article>').join('')||'<p>No hours saved yet for this employer. Add hours on any week and they are saved as you go.</p>';
+ openSubmissions();
+}
+function openSubmissions(){const records=[...(state.history||[])].reverse();const legacy=Object.keys(state.submitted).filter(w=>!records.some(h=>h.week===w));$('historyList').innerHTML=records.map(h=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(h.week),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Marked submitted · Revision '+h.revision+'<br>'+esc(new Date(h.savedAt).toLocaleString('en-AU'))+'</p></div><div><button class="btn" data-history-week="'+esc(h.week)+'">Open week</button><button class="btn primary" data-history-pdf="'+esc(h.id)+'">Saved PDF</button></div></article>').join('')+legacy.map(w=>'<article class="history-row"><div><strong>Week ending '+esc(fmt(add(parseDate(w),6),{day:'numeric',month:'short',year:'numeric'}))+'</strong><p>Previously marked submitted · No saved PDF snapshot</p></div><button class="btn" data-history-week="'+esc(w)+'">Open week</button></article>').join('')||'<p>No submissions yet. Mark a completed week as submitted to save a PDF snapshot here.</p>';$('historyDialog').showModal();}
 $('prefillWeek').onclick=()=>{
  const near=nearestWeekWithHours();if(!near)return;
  const source=parseDate(near.key),ending=fmt(add(source,6),{day:'numeric',month:'short'});
@@ -208,7 +252,7 @@ $('prefillWeek').onclick=()=>{
    next.entries[key]=slots(iso(add(source,i))).map(e=>({...e,id:crypto.randomUUID()}));}
   for(let i=0;i<7;i++){const key=iso(add(selected,i));
    for(const e of next.entries[key])if(overlaps(next,key,e,e.id))throw Error('Those slots would overlap in this week. Add them day by day instead.');}
-  persist(next);toast('Week prefilled from '+ending+'. Edit any day that differs.');
+  next.savedWeeks=touchWeek(next,iso(selected));persist(next);toast('Week prefilled from '+ending+'. Edit any day that differs.');
  });
 };
 $('elsewhere').onclick=()=>{const near=nearestWeekWithHours();if(!near)return;selected=parseDate(near.key);render();toast('Opened the week ending '+fmt(add(parseDate(near.key),6),{day:'numeric',month:'short'}));};
@@ -247,5 +291,9 @@ $('recoverList').addEventListener('click',e=>{const b=e.target.closest('button')
  if(!b.dataset.recover)return;const week=recoverable[Number(b.dataset.recover)];if(!week)return;
  if(!confirm('Add '+week.hours.toFixed(2)+' hours to the week ending '+fmt(add(parseDate(week.key),6),{day:'numeric',month:'short',year:'numeric'})+' for '+(state.settings.employer||'this employer')+'? Hours already in that week are kept.'))return;
  transact(()=>{persist(restoreWeek(state,week));selected=parseDate(week.key);render();$('recoverDialog').close();toast('Hours restored');});
+});
+$('weekList').addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;
+ if(b.dataset.historyWeek){selected=parseDate(b.dataset.historyWeek);render();$('historyDialog').close();return;}
+ if(b.dataset.weekPdf){try{const file=await createTimesheetPdf(state,parseDate(b.dataset.weekPdf));savePdf(file);toast('PDF downloaded');}catch(error){toast('PDF export failed: '+error.message);}}
 });
 $('historyList').addEventListener('click',async e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.historyWeek){selected=parseDate(b.dataset.historyWeek);render();$('historyDialog').close();}if(b.dataset.historyPdf){const h=state.history.find(h=>h.id===b.dataset.historyPdf);if(!h)return;try{const file=await createTimesheetPdf(h.snapshot,parseDate(h.week));savePdf(file,file.filename.replace('.pdf','-revision-'+h.revision+'.pdf'));}catch(error){toast('Saved PDF could not be created: '+error.message);}}});
