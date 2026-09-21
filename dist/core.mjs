@@ -7,8 +7,8 @@ export function add(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r;}
 export function validDate(s){return typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&iso(parseDate(s))===s;}
 export function hours(e){if(e.manual!==''&&e.manual!=null)return Number(e.manual);if(!e.start||!e.finish)return 0;const minutes=t=>+t.slice(0,2)*60+(+t.slice(3));let diff=minutes(e.finish)-minutes(e.start);if(diff<0)diff+=1440;return diff/60;}
 export function validateSlot(e){if(!validDate(e.date))throw Error('Choose a valid date.');const time=/^([01]\d|2[0-3]):[0-5]\d$/;if((e.start&&!time.test(e.start))||(e.finish&&!time.test(e.finish)))throw Error('Enter valid start and finish times.');const override=e.manual!==''&&e.manual!=null;if(override&&(!Number.isFinite(Number(e.manual))||Number(e.manual)<0||Number(e.manual)>24))throw Error('Hours must be between 0 and 24.');if(!override&&(!e.start||!e.finish||e.start===e.finish))throw Error('Enter different start and finish times, or an hours override.');}
-export function migrate(raw){const state={schema:3,activeCompany:raw?.activeCompany||'gradcon',companies:{...raw?.companies},history:[...(raw?.history||[])],scheduleOverrides:{...raw?.scheduleOverrides},dayNotes:{...raw?.dayNotes},dayNotesIncluded:{...raw?.dayNotesIncluded},sent:{...raw?.sent},settings:{...DEFAULTS,tag:'Concrete construction',logo:'',sender:'projects@gradcon.com.au',recipient:'accounts@gradcon.com.au',bcc:'fyne.boma@gmail.com',...raw?.settings},entries:{},submitted:{...raw?.submitted}};for(const [date,value] of Object.entries(raw?.entries||{})){state.entries[date]=(Array.isArray(value)?value:[value]).filter(Boolean).map((e,i)=>({...e,id:e.id||'legacy-'+date+'-'+i}));}return state;}
-export function companySnapshot(state){return structuredClone({settings:state.settings,entries:state.entries,submitted:state.submitted,sent:state.sent||{},dayNotes:state.dayNotes,dayNotesIncluded:state.dayNotesIncluded,history:state.history,scheduleOverrides:state.scheduleOverrides});}
+export function migrate(raw){const state={schema:3,activeCompany:raw?.activeCompany||'gradcon',companies:{...raw?.companies},history:[...(raw?.history||[])],scheduleOverrides:{...raw?.scheduleOverrides},dayNotes:{...raw?.dayNotes},dayNotesIncluded:{...raw?.dayNotesIncluded},sent:{...raw?.sent},removed:{...raw?.removed},settings:{...DEFAULTS,tag:'Concrete construction',logo:'',sender:'projects@gradcon.com.au',recipient:'accounts@gradcon.com.au',bcc:'fyne.boma@gmail.com',...raw?.settings},entries:{},submitted:{...raw?.submitted}};for(const [date,value] of Object.entries(raw?.entries||{})){state.entries[date]=(Array.isArray(value)?value:[value]).filter(Boolean).map((e,i)=>({...e,id:e.id||'legacy-'+date+'-'+i}));}return state;}
+export function companySnapshot(state){return structuredClone({settings:state.settings,entries:state.entries,submitted:state.submitted,sent:state.sent||{},removed:state.removed||{},dayNotes:state.dayNotes,dayNotesIncluded:state.dayNotesIncluded,history:state.history,scheduleOverrides:state.scheduleOverrides});}
 export function switchCompany(state,id){const next=structuredClone(state);next.companies[next.activeCompany]=companySnapshot(next);if(!next.companies[id])throw Error('Employer not found.');Object.assign(next,structuredClone(next.companies[id]));next.activeCompany=id;return next;}
 export const dailyTotal=slots=>(slots||[]).reduce((n,s)=>n+hours(s),0);
 export function recoveryCandidates(stores){
@@ -61,9 +61,9 @@ export function mergeBackup(state,payload){
  const mergeInto=(target,source)=>{
   for(const [date,list] of Object.entries(source.entries||{})){
    if(!validDate(date)||!Array.isArray(list)||!list.length)continue;
-   const existing=target.entries[date]||[],ids=new Set(existing.map(e=>e?.id));
+   const existing=target.entries[date]||[],ids=new Set(existing.map(e=>e?.id)),gone=target.removed||{};
    const seen=new Set(existing.map(e=>[e?.start,e?.finish,e?.manual,e?.site,e?.notes].join('|')));
-   const extra=list.filter(Boolean).filter(e=>!ids.has(e.id)&&!seen.has([e.start,e.finish,e.manual,e.site,e.notes].join('|')));
+   const extra=list.filter(Boolean).filter(e=>!ids.has(e.id)&&!gone[e.id]&&!seen.has([e.start,e.finish,e.manual,e.site,e.notes].join('|')));
    if(!extra.length)continue;
    target.entries[date]=[...existing,...extra].sort((a,b)=>(a.start||'').localeCompare(b.start||''));
    report.slots+=extra.length;report.weeks.add(weekKey(date));
@@ -74,6 +74,12 @@ export function mergeBackup(state,payload){
    if(target.dayNotesIncluded?.[date]===undefined)(target.dayNotesIncluded??={})[date]=included;
   for(const [week,value] of Object.entries(source.submitted||{}))if(value)(target.submitted??={})[week]=true;
   for(const [week,value] of Object.entries(source.sent||{}))if(value&&!target.sent?.[week])(target.sent??={})[week]=value;
+  for(const [id,when] of Object.entries(source.removed||{})){
+   const mine=(target.removed??={})[id];
+   if(!mine||mine<when)target.removed[id]=when;
+   for(const [date,list] of Object.entries(target.entries))
+    if(list?.some(e=>e?.id===id))target.entries[date]=list.filter(e=>e?.id!==id);
+  }
   const known=new Set((target.history||[]).map(h=>h?.id));
   for(const record of source.history||[])if(record?.id&&!known.has(record.id)){(target.history??=[]).push(record);report.snapshots++;}
  };
@@ -86,6 +92,12 @@ export function mergeBackup(state,payload){
    report.slots+=Object.values(profile.entries||{}).reduce((n,list)=>n+(list?.length||0),0);}
  }
  return {state:next,report:{...report,weeks:report.weeks.size}};
+}
+
+export function markRemoved(state,ids,when=new Date().toISOString()){
+ const removed={...state.removed};
+ for(const id of [].concat(ids))if(id)removed[id]=when;
+ return removed;
 }
 
 export function appendSlot(state,date,slot){validateSlot({...slot,date});return {...state,entries:{...state.entries,[date]:[...(state.entries[date]||[]),slot]}};}

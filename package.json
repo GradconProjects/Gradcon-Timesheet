@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "test": "node test.mjs && node pdf-test.mjs && node features-test.mjs && node send-test.mjs"
+    "test": "node test.mjs && node pdf-test.mjs && node features-test.mjs && node send-test.mjs && node sync-test.mjs"
   },
   "engines": {
     "node": ">=22"

@@ -14,7 +14,8 @@ The public browser configuration is in dist/supabase-config.mjs. It is not yet i
 
 ## Remaining before launch
 
-- Connect sign-in and cloud storage to the existing local-first UI, with conflict protection and explicit import of existing local entries.
+- Cross-device sync is built without sign-in: database/sync.sql holds one row per workspace, reached through two security-definer functions granted to anon, and the browser merges rather than overwrites (dist/sync.mjs). The workspace UUID is the only credential. Apply database/sync.sql to enable it.
+- Sign-in and a per-user normalised schema remain the longer-term goal; the workspace model is a capability, so a leaked code exposes that timesheet.
 - Connect an accessible GitHub repository and deploy to Vercel.
 - Configure Google OAuth for sending from projects@gradcon.com.au. ChatGPT Gmail credentials cannot be transferred to the application. Steps are in SENDING.md; the function reads GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN as project secrets.
 - On-demand send is built: supabase/functions/send-timesheet emails one week's PDF, archives it in timesheet-pdfs, logs it in timesheet_sends (database/send-log.sql) and refuses a repeat send for the same week. It is not deployed to this project yet, and the Supabase connector available to Claude cannot reach yflwwzmyakmwvslmirzx.

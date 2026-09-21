@@ -14,9 +14,17 @@ Import this repository in Vercel, select framework **Other**, and use output dir
 
 The app saves entries in browser storage. PDF export, preview and printing work. **Send to accounts** emails the PDF in one click once the send service is deployed and connected — see `SENDING.md`. Until then the button points you at Settings and "Email by hand" opens a pre-filled Gmail draft for you to attach the downloaded PDF yourself. Cloud sign-in, device sync and scheduled unattended sending are still not implemented.
 
+## Sync across devices
+
+Settings → **Sync across devices** holds a workspace code. Create one on the device that already has your hours, then paste the same code into Settings on your phone or laptop: every device holding it keeps the same timesheet. Each device pulls what the workspace has, merges it without overwriting anything entered locally, and pushes the union back — so entries made on two devices both survive, and a slot deleted on one is deleted on the other rather than reappearing. Syncing runs after every save, when the tab comes back to the foreground, and when the network returns; the week bar shows the state.
+
+The code is the only credential and it is a random UUID, so treat it like a password: anyone holding it can read and write that timesheet. Nothing else can — `database/sync.sql` keeps the table closed to the browser key and exposes only two functions that touch the single row whose id was supplied, so a workspace cannot be listed or discovered. A device that has not been given the code syncs nothing and keeps working exactly as before.
+
+**Before sync works, `database/sync.sql` must be applied once** in the Supabase SQL editor of project `yflwwzmyakmwvslmirzx`. Until then a workspace code simply reports “Not synced” and hours stay local.
+
 ## Keeping hours safe
 
-Hours live in this browser, per employer. A new week opens empty every Monday, so when the week on screen has none, the week bar points at the nearest week that does: “← Week ending 20 Sept has 23.50 hours”. **Recover hours** lists everything still stored on the device — other employer profiles, submitted snapshots, the previous storage key and the automatic backups taken before every save — and restores any of it into the employer in view.
+Without sync, hours live in this browser, per employer. A new week opens empty every Monday, so when the week on screen has none, the week bar points at the nearest week that does: “← Week ending 20 Sept has 23.50 hours”. **Prefill from last week** copies that week’s slots into the open one, sites and notes included, ready to edit. **Recover hours** lists everything still stored on the device — other employer profiles, submitted snapshots, the previous storage key and the automatic backups taken before every save — and restores any of it into the employer in view.
 
 **Save backup file** writes every employer, entry, note and snapshot to a JSON file. **Restore from file** merges one back in on any browser or device: it only fills gaps, so a slot edited here keeps the edit and restoring twice changes nothing. That file is the only copy that survives cleared site data or a lost device — cloud sync is still not implemented.
 
